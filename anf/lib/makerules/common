@@ -5,3 +5,4 @@
 	cat $(ANTELOPE)/data/templates/xpy > $@
 	echo -e "sys.path.append(os.environ['ANF'] + '/lib/python')\n" >> $@
 	cat $*.xpy >> $@
+	chmod +x $@
