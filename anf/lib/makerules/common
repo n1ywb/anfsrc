@@ -1,0 +1,7 @@
+
+# ANF-specific target overrides
+% : %.xpy $(ANTELOPE)/data/templates/xpy
+	$(RM) $@
+	cat $(ANTELOPE)/data/templates/xpy > $@
+	echo -e "sys.path.append(os.environ['ANF'] + '/lib/python')\n" >> $@
+	cat $*.xpy >> $@
