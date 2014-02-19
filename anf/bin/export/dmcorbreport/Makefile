@@ -1,0 +1,3 @@
+BIN=dmcorbreport
+
+include $(ANFMAKE)
