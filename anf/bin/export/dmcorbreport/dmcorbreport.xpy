@@ -77,6 +77,7 @@ bytes transferred to/from a client, not the amount of bytes in the data payload.
 
 """
 import logging
+import pygeoip
 from optparse import OptionParser
 
 def main(args=None):
@@ -89,6 +90,7 @@ def main(args=None):
     op.add_option('-r', '--reject', action='store')
     op.add_option('-p', '--parameter-file', action='store', default=args[0])
     op.add_option('-v', '--verbose', dest='verbose', action='store_true')
+    op.add_option('-d', '--ipdb', action='store', default='GeoLiteCity.dat')
     (options, args) = op.parse_args(args[1:])
 
     if options.verbose:
@@ -98,7 +100,9 @@ def main(args=None):
 
     logging.basicConfig(level=loglevel)
     logging.info('hello from main')
-    logging.debug('debuggery')
+    logging.debug('Loading GeoIP database from %s' % options.ipdb)
+    gi = pygeoip.GeoIP(options.ipdb)
+    logging.debug('Region is %s' % gi.record_by_name('ucsd.edu'))
     logging.info('Goodbye from main')
 
 if __name__ == '__main__':
