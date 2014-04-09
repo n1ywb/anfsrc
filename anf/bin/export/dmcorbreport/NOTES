@@ -1,0 +1,71 @@
+For saving state, consider the shelve library.
+http://docs.python.org/2/library/shelve.html#module-shelve
+
+ipa in 5.4pre is a preconfigured iPython environment with the Antelope modules
+configured.
+
+Best to track client instances by thread id and connection time - the 'thread'
+and 'started' properties for each entry in the clients return hash.
+
+Get the list of current clients in an orb:
+
+myorb=orb.orbopen(orbname)
+(timestamp,clientlist) = myorb.clients()
+
+Working with the clientlist
+
+In [25]: clientlist[0]
+Out[25]:
+{'address': '139.142.67.7',
+ 'bytes': 0,
+ 'errors': 0,
+ 'fd': 14,
+ 'host': '?',
+ 'lagprev': 41979904,
+ 'lastpkt': -1.0,
+ 'lastrequest': 7,
+ 'nreads': 3,
+ 'nreject': 0,
+ 'nrequests': 3,
+ 'nselect': 0,
+ 'nwrites': 2,
+ 'packets': 0,
+ 'perm': 'r',
+ 'pid': 1563,
+ 'pktid': 27545819,
+ 'port': 46293,
+ 'read': 189,
+ 'reject': '',
+ 'select': '',
+ 'started': 1392849865.255878,
+ 'thread': 14408,
+ 'what': 'orb2orb anfexport.ucsd.edu:usarrayTA :cnsn -m @pf/orb2orb_TA.match',
+ 'who': 'rt',
+ 'written': 48}
+
+In [26]: clientlist[0]['address']
+Out[26]: '139.142.67.7'
+
+In [27]: [x['address'] for x in clientlist]
+Out[27]:
+['139.142.67.7',
+ '132.239.154.194',
+ '127.0.0.1',
+ '169.228.44.76',
+ '139.142.67.7',
+ '129.79.146.53',
+ '169.228.44.81',
+ '128.95.166.10',
+ '169.228.44.73',
+ '137.229.32.207',
+ '132.156.41.1',
+ '131.215.68.113',
+ '132.239.152.201',
+ '139.142.67.7',
+ '129.138.26.106',
+ '169.228.44.85',
+ '132.239.153.27',
+ '134.197.33.4',
+ '169.228.44.104',
+ '139.142.67.7']
+
