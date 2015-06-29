@@ -10,17 +10,22 @@ Rewritten by Geoff Davis <geoff@ucsd.edu> to use Grequests
 
 #from antelope import datascope
 from antelope.datascope import dbopen, closing, freeing, \
-        dbDATABASE_NAME, dbTABLE_NAME, dbTABLE_PRESENT, DatascopeError, Dbptr
+        dbDATABASE_NAME, dbTABLE_NAME, dbTABLE_PRESENT, DatascopeError
+from antelope.stock import now, epoch2str
 import logging
 from anf.eloghandler import ElogHandler
 import sys
 import argparse
-#import grequests
+import grequests
 import re
 from collections import defaultdict
+import json
 
 EXIT_NOSTATIONS=10
 EXIT_DBERROR=11
+EXIT_JSONERROR=12
+
+logging.basicConfig()
 
 class BalerException(Exception):
     """base class for our exceptions"""
@@ -28,6 +33,10 @@ class BalerException(Exception):
 
 class BalerError(BalerException):
     """base class for errors"""
+    pass
+
+class BalerJSONWriteError(BalerError):
+    """problem with writing the JSON files"""
     pass
 
 class BalerNoTableError(BalerError):
@@ -41,6 +50,7 @@ class BalerNoTableError(BalerError):
 class BalerStations():
     """List of stations with Baler44s installed"""
 
+    all_known_stations=[]
     stations={}
 
     def __init__(self, dbmaster, loglevel=logging.INFO, select=None,
@@ -63,7 +73,11 @@ class BalerStations():
             self.stations=self._get_stations_from_db(db)
 
     def _get_stations_from_db(self, db):
-        """ Get the list of valid stations from the db"""
+        """ Get the list of valid stations from the db
+
+        TODO: once dbmaster is modified, we need to get the real baler TCP.
+        We currently use the default of 5381
+        """
 
         ipms = r'(?P<ip>[\d]{1,3}\.[\d]{1,3}\.[\d]{1,3}\.[\d]{1,3}):[\d]{1,5}'
         ipre = re.compile(ipms)
@@ -84,9 +98,17 @@ class BalerStations():
 
                 self.logger.debug('[%s] [%s] [%s]' % (dlsta,net,sta))
                 stations[sta]['dlsta']  = dlsta
+                stations[sta]['sta']    = sta
                 stations[sta]['net']    = net
                 stations[sta]['status'] = 'Decom'
                 stations[sta]['ip']     = 0
+                stations[sta]['bport']  = 5381 # default baler port
+
+        # For whatever reason, the original script dumped a JSON file with a
+        # list of all valid stations, with no other information other than
+        # that, and prior to subsetting.. Save that as a list so that we can
+        # replicate the functionality.
+        self.all_known_stations=stations.keys()
 
         # subset stations
         for sta in stations.keys():
@@ -99,6 +121,7 @@ class BalerStations():
 
         for sta in stations.keys():
             s='sta == "%s" && snet == "%s" && endtime == NULL'
+            deployment.record=-1
             if deployment.find(s % (sta, stations[sta]['net'])):
 
                 stations[sta]['status'] = 'Active'
@@ -109,13 +132,14 @@ class BalerStations():
                 self.logger.debug(sta + ' set to "Active"')
 
             # Get IP for station
-            recordid = staq330.find('dlsta == "%s" && endtime == NULL' % dlsta)
+            staq330.record=-1
+            recordid = staq330.find('dlsta == "%s" && endtime == NULL' %
+                                    stations[sta]['dlsta'])
 
             if recordid >=0:
-                sip=Dbptr(staq330)
-                sip.record=recordid
-
-                inp = sip.getv('inp')
+                self.logger.debug(staq330)
+                staq330.record=recordid
+                inp = staq330.getv('inp')
                 inp=inp[0]
 
                 self.logger.debug('%s inp=>%s' % (sta, inp))
@@ -133,8 +157,6 @@ class BalerStations():
 
         return stations
 
-
-
     def _tablelookup(self, db, tablename):
         """open a view and verify that it has records"""
 
@@ -151,8 +173,40 @@ class BalerStations():
         self.logger.debug('%s.%s table OK' % (dbname,tablename))
         return dbtableview
 
+class BalerDownloader():
+    """Class to download data from Balers using GRequests"""
+    def __init__(self, dlsta, net, sta, ip, port, loglevel=logging.INFO):
+        self.loglevel=loglevel
+        self.dlsta=dlsta
+        self.net=net
+        self.sta=sta
+        self.ip=ip
+        self.port=port
+
+        self.logger=logging.getLogger(__name__)
+        self.logger.setLevel(loglevel)
+
+    def url(self):
+        return 'http://%s:%s/stats.html' % (self.ip, self.port)
+
+    def responseHandler(self,r,*args,**kwargs):
+        """callback function to update baler information
+
+        The grequests library uses the requests library under the hook. Making
+        a request results in a Response object being passed to this callback.
+        """
+        self.logger.info("BalerDownloader(%s): Got a response for %s" % (
+            self.dlsta, r.url))
+
+    def request(self):
+        """Generate an AsyncRequest with a callback to this object
+
+        The returned object is suitable for use by the grequests.map()
+        function.
+        """
+        return grequests.get(url=self.url(), callback=self.responseHandler)
+
 def main(argv=sys.argv):
-    logging.basicConfig()
     logger = logging.getLogger()
     # Remove the default handler and add ours
     logger.handlers=[]
@@ -180,12 +234,50 @@ def main(argv=sys.argv):
                          loglevel=logger.level,
                          select=args.select,
                          reject=args.reject)
+
+        make_baler44_status_json(args.output_dir, bs.all_known_stations)
+        retrieve_status_from_balers(bs.stations)
     except BalerException as e:
         logger.exception('A problem with baler processing:')
         return(EXIT_NOSTATIONS)
     except DatascopeError as e:
         logger.exception('A problem with the database occured:')
         return(EXIT_DBERROR)
+    except BalerJSONWriteError as e:
+        logger.exception('Could not write one of the JSON files out:')
+        return(EXIT_JSONERROR)
+
+    # If we make it here everything went well.
+    return(0)
+
+def make_baler44_status_json(output_dir, stations):
+    """dump a list of all stations with Balers to baler44_status.json
+
+    @throws BalerJSONWriteError
+    """
+    fname=os.path.join(output_dir, 'baler44_status.json')
+    logging.debug('Prepare JSON file: ' + fname)
+
+    out={
+        'updated': epoch2str(now(),'%Y-%m-%d %H:%M:%S'),
+        'stations': stations,
+    }
+    # TODO: actually write this to a file
+    print json.dumps(out, indent=4)
+
+def retrieve_status_from_balers(stations, poolsize=100):
+    """request status pages from stations"""
+
+    downloaders = [BalerDownloader(net=stations[s]['net'],
+                                   sta=stations[s]['sta'],
+                                   dlsta=stations[s]['dlsta'],
+                                   ip=stations[s]['ip'],
+                                   port=stations[s]['bport']) for s in stations.keys()]
+
+    reqs = [dl.request() for dl in downloaders]
+
+    print reqs
+    responses = grequests.map(reqs, poolsize)
 
 if __name__ == '__main__':
     sys.exit(main())
