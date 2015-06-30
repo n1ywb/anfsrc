@@ -175,7 +175,7 @@ class BalerStations():
         self.logger.debug('%s.%s table OK' % (dbname,tablename))
         return dbtableview
 
-class BalerDownloader():
+class BalerStatusDownloader():
     """Class to download data from Balers using GRequests"""
     def __init__(self, dlsta, net, sta, ip, port, loglevel=logging.INFO):
         self.loglevel=loglevel
@@ -205,7 +205,7 @@ class BalerDownloader():
         The grequests library uses the requests library under the hook. Making
         a request results in a Response object being passed to this callback.
         """
-        self.logger.info("BalerDownloader(%s): Got a response for %s" % (
+        self.logger.info("BalerStatusDownloader(%s): Got a response for %s" % (
             self.dlsta, r.url))
 
         self.response=r
@@ -312,7 +312,7 @@ class App():
     def retrieve_status_from_balers(self, stations, poolsize=100):
         """request status pages from stations"""
 
-        downloaders = [BalerDownloader(
+        downloaders = [BalerStatusDownloader(
             net=v['net'],
             sta=k,
             dlsta=v['dlsta'],
