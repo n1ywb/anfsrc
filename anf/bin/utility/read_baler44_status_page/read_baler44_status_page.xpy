@@ -579,8 +579,8 @@ def _parse_Media_File_Lists(content):
     parse the "Media File Lists" section
 
     BeautifulSoup will return an empty string if the media file lists section
-    only contains <a> tags, since those count as child nodes rather than the
-    pre node.
+    only contains <a> tags, since those count as child tags rather than the
+    "string" text of the pre tag.
 
     ILLEGAL MEDIA FILE NAMES is in the Media File Lists section.
     Original script craps out the whole line rather than removing the "ILLEGAL
