@@ -1,0 +1,3 @@
+BIN=dcupsmon
+
+include $(ANFMAKE)
