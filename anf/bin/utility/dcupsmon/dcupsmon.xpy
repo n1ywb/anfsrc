@@ -1,3 +1,4 @@
+import os
 from antelope import orb, Pkt
 #from pysnmp.entity.rfc3413.oneliner import ntforb
 import logging
@@ -255,6 +256,8 @@ class DcupsMon(object):
                 dcupsstate.update(time=stime, modifier=self, **kwargs)
 
 if __name__ == "__main__":
+    # Always release the GIL with the Antelope bindings
+    os.environ['ANTELOPE_PYTHON_GILRELEASE']='1'
     u = DcupsMon(orbname=ORB_NAME,select=ORB_SELECT)
 
     while True:
