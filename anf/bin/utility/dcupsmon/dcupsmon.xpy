@@ -1,7 +1,7 @@
 from antelope import orb, Pkt
 #from pysnmp.entity.rfc3413.oneliner import ntforb
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -40,7 +40,7 @@ class EnhancedPacket(Pkt.Packet):
         return self.channels[idx]
 
 
-class TimestampedValue():
+class TimestampedValue(object):
     """Track a value and the time it changed"""
 
     def __init__(self, value, changetime=datetime.now()):
@@ -48,23 +48,40 @@ class TimestampedValue():
         if not isinstance(changetime, datetime):
             raise TypeError(repr(changetime)+" is not a datetime object")
         self.value=value
-        self._changed=changetime
+        self.changed=changetime
+
+    def __set__(self):
+        self.update(value)
 
     def update(self, value, changetime=datetime.now()):
         # verify that we got passed a datetime object for changedDateTime
         if not isinstance(changetime, datetime):
             raise TypeError(repr(changetime)+" is not a datetime object")
         self.value=value
-        self._changed=changetime
+        self.changed=changetime
 
-    def getChanged(self):
-        return _changed
-
-class UpsStateViewer:
+class UpsStateViewer(object):
     def update(self, subject):
         print subject
+        if subject.isOnBattery():
+            print "UPS has been on battery for %s seconds." % subject.timeOnBattery()
+            timeleft=subject.runtimeleft()
+            if timeleft:
+                print "UPS has %s remaining runtime" % runtimeleft
+            else:
+                print "UPS remaining runtime unknown"
+        else:
+            lastbattery = subject.lastElapsedOnBattery
+            if lastbattery:
+                print "UPS no longer on battery. Total time on battery: %s" % \
+                        lastbattery
 
 class DcupsState(object):
+    """Track the state of a UPS as reported by a Data Concentrator
+
+    Expects to see the HAZARD and ACFAIL attributes updated, typically by
+    reading from an orbserver and unstuffing packets
+    """
     def __init__(self, name, hazardMinutes=5):
         """constructor for a data concentrator UPS state tracker
 
@@ -77,6 +94,9 @@ class DcupsState(object):
         self._observers = []
         self.hazardMinutes=hazardMinutes
 
+        self._onBatteryStart=None
+        self.lastElapsedOnBattery=None # last time between ACFAIL on and off
+
         for c in UPS_CHANS:
             self.__dict__[c]=TimestampedValue(0)
 
@@ -87,6 +107,26 @@ class DcupsState(object):
         return "%s %s: hazardMinutes %s, ACFAIL: %s, HAZARD: %s" % (
             self.__class__, self.name, self.hazardMinutes, self.ACFAIL.value,
             self.HAZARD.value)
+
+    def runtimeleft(self):
+        """if the UPS is in ACFAIL and the HAZARD is on, report time to shutdown
+        Returns a datetime timedelta object
+        Otherwise return None
+        """
+        if self.ACFAIL.value > 0 and self.HAZARD.value > 0:
+            return datetime.now() - self.HAZARD.changed
+        else:
+            return None
+
+    def isOnBattery(self):
+        return self.ACFAIL.value > 0
+
+    def timeOnBattery(self):
+        """Returns how long the UPS has been on battery"""
+        if self.isOnBattery():
+            return datetime.now() - self.ACFAIL.changed
+        else:
+            return timedelta(0)
 
     def attach(self, observer):
         if not observer in self._observers:
@@ -103,23 +143,43 @@ class DcupsState(object):
             if modifier != observer:
                 observer.update(self)
 
-    def update(self, time, **kwargs):
+    def _process_changes(self, changes):
+        """Update statistics for state changes"""
+        logging.debug("_process_changes: " + str(changes))
+        try:
+            if changes['ACFAIL'][1] > 0:
+                self._onBatteryStart = self.ACFAIL.changed
+            elif changes['ACFAIL'][1] == 0:
+                self.lastElapsedOnBattery = self.ACFAIL.changed - \
+                        self._onBatteryStart
+                self._onBatteryStart = None
+        except KeyError:
+            pass
+
+    def update(self, time, modifier=None, **kwargs):
+        """Handle an update to state attributes"""
+
         #logging.debug("got an update: " + str(kwargs))
-        changed={}
+        changes={}
         if isinstance(time,datetime):
             changetime=time
         else:
             changetime=datetime.fromtimestamp(time)
 
         for key in kwargs:
+            if key not in UPS_CHANS:
+                # Make sure we don't update an attribute that we shouldn't
+                next
+
             old = self.__dict__[key]
             if old.value != kwargs[key]:
-                changed[key]=(old.value, kwargs[key])
+                changes[key]=(old.value, kwargs[key])
                 old.update(kwargs[key], changetime)
 
-        if len(changed) > 0:
+        if len(changes) > 0:
+            self._process_changes(changes)
             logging.debug("Something changed, notifying observers")
-            self.notify()
+            self.notify(modifier=modifier)
 
 
 class DcupsMon(object):
@@ -192,20 +252,7 @@ class DcupsMon(object):
                 kwargs={}
                 for c in UPS_CHANS:
                     kwargs[c]=pkt.getChannelByName(c).data[samp]
-                dcupsstate.update(stime, **kwargs)
-#            for chan in pkt.channels:
-#                if chan.chan in UPS_CHANS:
-#                    printed = 0
-#                    for samp in chan.data:
-#                        if samp != s[chan.chan]:
-#                            if not printed:
-#                                printed = 1
-#                                print "pktid: %d time: %s" % (pktid, pkt.time)
-#                                print ("%s: %s" % (chan.chan, chan.data))
-#
-#                            logging.warning('%s %s changed from %d to %d' % (
-#                                srcname, chan.chan, s[chan.chan], samp))
-#                            s[chan.chan]=samp
+                dcupsstate.update(time=stime, modifier=self, **kwargs)
 
 if __name__ == "__main__":
     u = DcupsMon(orbname=ORB_NAME,select=ORB_SELECT)
