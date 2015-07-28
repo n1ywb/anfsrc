@@ -37,6 +37,11 @@ class EnhancedPacket(Pkt.Packet):
         return pkt_type
 
     def getChannelByName(self, channame):
+        """Return the PktChannel object with chan attribute matching name
+
+        *WARNING* In the case of name collisions, only one channel will be
+        returned - the one with the highest index number in the channels tuple.
+        """
         idx = self._chanindex[channame]
         return self.channels[idx]
 
