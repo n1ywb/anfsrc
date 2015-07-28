@@ -2,6 +2,7 @@ import os
 from antelope import orb, Pkt
 #from pysnmp.entity.rfc3413.oneliner import ntforb
 import logging
+import threading
 from datetime import datetime, timedelta
 
 logging.basicConfig(level=logging.DEBUG)
@@ -67,20 +68,83 @@ class TimestampedValue(object):
         self.changed=changetime
 
 class UpsStateViewer(object):
+
+    notify_interval=60.0
+    def __init__(self):
+        self.notifierthread=None
+
     def update(self, subject):
         print subject
         if subject.isOnBattery():
-            print "UPS has been on battery for %s seconds." % subject.timeOnBattery()
-            timeleft=subject.runtimeleft()
-            if timeleft:
-                print "UPS has %s remaining runtime" % runtimeleft
-            else:
-                print "UPS remaining runtime unknown"
+            self.check_notifier(subject)
         else:
+            self.cancel_notifier()
+            self.print_offbattery(subject)
+
+    def check_notifier(self, subject):
+        """Check and start the notifier thread"""
+        if not self.notifierthread or self.notifierthread.isAlive() == False:
+            self.notifierthread = TimedExecutor(self.notify_interval,
+                                                self.print_onbattery,
+                                                True,
+                                                [subject])
+            self.notifierthread.start()
+        else:
+            logging.debug('Notifier thread already running for '+subject.name)
+
+    def cancel_notifier(self):
+        if self.notifierthread:
+            self.notifierthread.cancel()
+            self.notifierthread=None
+
+    def print_onbattery(self, subject):
+        print "UPS has been on battery for %s seconds." % subject.timeOnBattery()
+        timeleft=subject.runtimeleft()
+        if timeleft:
+            print "UPS has %s remaining runtime" % timeleft
+        else:
+            print "UPS remaining runtime unknown"
+
+    def print_offbattery(self, subject):
             lastbattery = subject.lastElapsedOnBattery
             if lastbattery:
                 print "UPS no longer on battery. Total time on battery: %s" % \
                         lastbattery
+
+
+class TimedExecutor(threading.Thread):
+    """Call a function repeatedly after a specified number of seconds
+
+        t=TimedExecutor(30.0, f, *args=[], **kwargs={})
+        t.start()
+        t.cancel()
+    """
+    def __init__(self, interval, function, atstart=False, args=[], kwargs={}):
+        threading.Thread.__init__(self)
+        self.interval = interval
+        self.function = function
+        self.args = args
+        self.kwargs = kwargs
+        self.atstart = atstart
+        self.finished = threading.Event()
+
+    def cancel(self):
+        """Stop running the repeating task"""
+        self.finished.set()
+
+    def run_forever(self):
+        while True:
+            self.finished.wait(self.interval)
+            if self.finished.is_set():
+                break
+            else:
+                self.function(*self.args, **self.kwargs)
+
+    def run(self):
+        if self.atstart:
+            if not self.finished.is_set():
+                self.function(*self.args, **self.kwargs)
+        self.run_forever()
 
 class DcupsState(object):
     """Track the state of a UPS as reported by a Data Concentrator
