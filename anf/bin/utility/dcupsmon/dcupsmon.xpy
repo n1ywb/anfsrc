@@ -216,7 +216,7 @@ class DcupsMon(object):
         num_sources = self.orb.select(self.select)
 
         logging.info("Connected to %s, %d sources match selection %s" % (
-            self.orbname, num_sources, self.orb.select))
+            self.orbname, num_sources, self.select))
 
     def getDcupsState(self, srcname):
             """ Get the current sourcename's state object """
