@@ -46,6 +46,10 @@ class EnhancedPacket(Pkt.Packet):
         idx = self._chanindex[channame]
         return self.channels[idx]
 
+    @Pkt.Packet.channels.setter
+    def channels(self,channels):
+        super(EnhancedPacket, self).channels(channels)
+        self._rehashChannels()
 
 class TimestampedValue(object):
     """Track a value and the time it changed"""
@@ -151,6 +155,9 @@ class DcupsState(object):
 
     Expects to see the HAZARD and ACFAIL attributes updated, typically by
     reading from an orbserver and unstuffing packets
+
+    Thread safety: this object will automatically attempt to acquire an
+    internal lock for operations involving data reads and writes.
     """
     def __init__(self, name, hazardMinutes=5):
         """constructor for a data concentrator UPS state tracker
@@ -160,6 +167,8 @@ class DcupsState(object):
         hazardMinutes is how many minutes are left of run time when the hazard
         channel is non-zero
         """
+        self.lock = threading.RLock()
+        self.notifier_lock = threading.RLock()
         self.name = name
         self._observers = []
         self.hazardMinutes=hazardMinutes
@@ -171,60 +180,69 @@ class DcupsState(object):
             self.__dict__[c]=TimestampedValue(0)
 
     def __repr__(self):
-        return "%s(%r)" % (self.__class__, self.__dict__)
+        with self.rlock:
+            return "%s(%r)" % (self.__class__, self.__dict__)
 
     def __str__(self):
-        return "%s %s: hazardMinutes %s, ACFAIL: %s, HAZARD: %s" % (
-            self.__class__, self.name, self.hazardMinutes, self.ACFAIL.value,
-            self.HAZARD.value)
+        with self.rlock:
+            return "%s %s: hazardMinutes %s, ACFAIL: %s, HAZARD: %s" % (
+                self.__class__, self.name, self.hazardMinutes, self.ACFAIL.value,
+                self.HAZARD.value)
 
     def runtimeleft(self):
         """if the UPS is in ACFAIL and the HAZARD is on, report time to shutdown
         Returns a datetime timedelta object
         Otherwise return None
         """
-        if self.ACFAIL.value > 0 and self.HAZARD.value > 0:
-            return datetime.now() - self.HAZARD.changed
-        else:
-            return None
+        with self.lock:
+            if self.ACFAIL.value > 0 and self.HAZARD.value > 0:
+                return datetime.now() - self.HAZARD.changed
+            else:
+                return None
 
     def isOnBattery(self):
-        return self.ACFAIL.value > 0
+        with self.lock:
+            return self.ACFAIL.value > 0
 
     def timeOnBattery(self):
         """Returns how long the UPS has been on battery"""
-        if self.isOnBattery():
-            return datetime.now() - self.ACFAIL.changed
-        else:
-            return timedelta(0)
+        with self.lock:
+            if self.isOnBattery():
+                return datetime.now() - self.ACFAIL.changed
+            else:
+                return timedelta(0)
 
     def attach(self, observer):
-        if not observer in self._observers:
-            self._observers.append(observer)
+        with self.notifier_lock:
+            if not observer in self._observers:
+                self._observers.append(observer)
 
     def detach(self, observer):
-        try:
-            self._observers.remove(observer)
-        except ValueError:
-            pass
+        with self.notifier_lock:
+            try:
+                self._observers.remove(observer)
+            except ValueError:
+                pass
 
     def notify(self, modifier=None):
-        for observer in self._observers:
-            if modifier != observer:
-                observer.update(self)
+        with self.notifier_lock:
+            for observer in self._observers:
+                if modifier != observer:
+                    observer.update(self)
 
     def _process_changes(self, changes):
         """Update statistics for state changes"""
         logging.debug("_process_changes: " + str(changes))
-        try:
-            if changes['ACFAIL'][1] > 0:
-                self._onBatteryStart = self.ACFAIL.changed
-            elif changes['ACFAIL'][1] == 0:
-                self.lastElapsedOnBattery = self.ACFAIL.changed - \
-                        self._onBatteryStart
-                self._onBatteryStart = None
-        except KeyError:
-            pass
+        with self.lock:
+            try:
+                if changes['ACFAIL'][1] > 0:
+                    self._onBatteryStart = self.ACFAIL.changed
+                elif changes['ACFAIL'][1] == 0:
+                    self.lastElapsedOnBattery = self.ACFAIL.changed - \
+                            self._onBatteryStart
+                    self._onBatteryStart = None
+            except KeyError:
+                pass
 
     def update(self, time, modifier=None, **kwargs):
         """Handle an update to state attributes"""
@@ -241,10 +259,11 @@ class DcupsState(object):
                 # Make sure we don't update an attribute that we shouldn't
                 next
 
-            old = self.__dict__[key]
-            if old.value != kwargs[key]:
-                changes[key]=(old.value, kwargs[key])
-                old.update(kwargs[key], changetime)
+            with self.lock:
+                old = self.__dict__[key]
+                if old.value != kwargs[key]:
+                    changes[key]=(old.value, kwargs[key])
+                    old.update(kwargs[key], changetime)
 
         if len(changes) > 0:
             self._process_changes(changes)
