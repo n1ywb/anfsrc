@@ -1,7 +1,7 @@
 # Makefile to install Python modules under $ANF
 #
 
-MODULE_NAME = beautifulsoup4
-MODULE_VERSION = '>=4.4.1'
+MODULE_NAME = BeautifulSoup
+MODULE_VERSION = '>=3.2.1'
 
 include ../lib/pymodule.mk

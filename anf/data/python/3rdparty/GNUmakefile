@@ -6,6 +6,7 @@ DIRS += virtualenvwrapper
 DIRS += grequests
 DIRS += gevent
 DIRS += beautifulsoup
+DIRS += beautifulsoup4
 DIRS += nose
 DIRS += mock
 DIRS += pyflickr
